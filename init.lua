@@ -1,12 +1,10 @@
 local current_portal_pos = {}
 
--- 1. PRIVILEGE REGISTRATION
 core.register_privilege("myportal", {
 	description = "Place Portals",
 	give_to_singleplayer = true
 })
 
--- 2. PARTICLE FUNCTIONS
 local function parti(pos)
 	core.add_particlespawner(50, 0.4,
 		{x=pos.x + 0.5, y=pos.y, z=pos.z + 0.5}, {x=pos.x - 0.5, y=pos.y, z=pos.z - 0.5},
@@ -23,7 +21,6 @@ local function parti2(pos)
 		3, 5, 3, 5, false, "myportal_portal_parti.png")
 end
 
--- 3. NODE DEFINITIONS
 core.register_node("myportal:portal", {
 	description = "portal",
 	drawtype = "mesh",
@@ -50,7 +47,7 @@ core.register_node("myportal:portal", {
 		}
 	},
 })
--- 1. UPDATED CENTER NODE (With Dig Protection)
+
 core.register_node("myportal:center", {
 	description = "center",
 	tiles = {{name="myportal_ani_blue.png", animation={type="vertical_frames",aspect_w=16, aspect_h=16, length=0.5}}},
@@ -59,7 +56,7 @@ core.register_node("myportal:center", {
 	paramtype2 = "facedir",
 	post_effect_color = { r=3, g=42, b=50, a=255 },
 	walkable = false,
-	drop = "myportal:portal_placer",
+	drop = "",
 	light_source = 14,
 	groups = {cracky = 2, oddly_breakable_by_hand = 1, not_in_creative_inventory = 1},
 	node_box = {
@@ -75,25 +72,29 @@ core.register_node("myportal:center", {
 	selection_box = { type = "fixed", fixed = {{-1.5,-1.5,-0.5,1.5,1.5,0.5}} },
 	collision_box = { type = "fixed", fixed = {{-1.5,-1.5,-0.5,1.5,1.5,0.5}} },
 	
-	-- PROTECTION: Only allow digging if player has the priv
-	can_dig = function(pos, player)
-		local name = player:get_player_name()
-		if core.get_player_privs(name).myportal then
-			return true
-		else
+	on_dig = function(pos, node, digger)
+		if not digger then return end
+		local name = digger:get_player_name()
+		
+		if not core.get_player_privs(name).myportal then
 			core.chat_send_player(name, "You need the myportal priv to remove this!")
-			return false
+			return
+		end
+
+		local inv = digger:get_inventory()
+		local stack = ItemStack("myportal:portal_placer")
+		if inv:room_for_item("main", stack) then
+			inv:add_item("main", stack)
+		else
+			core.add_item(pos, stack)
+		end
+
+		local p = core.find_nodes_in_area({x=pos.x-2, y=pos.y-2, z=pos.z-2}, {x=pos.x+2, y=pos.y+2, z=pos.z+2}, {"myportal:portal","myportal:center","myportal:centerb","myportal:hidden"})
+		for _,ps in ipairs(p) do 
+			core.remove_node(ps) 
 		end
 	end,
-
-	on_destruct = function(pos)
-		local p = core.find_nodes_in_area({x=pos.x-2, y=pos.y-2, z=pos.z-2}, {x=pos.x+2, y=pos.y+2, z=pos.z+2}, {"myportal:portal","myportal:centerb","myportal:hidden"})
-		for _,ps in ipairs(p) do core.remove_node(ps) end
-	end,
 })
-
--- 2. PLACER (Already handles placement privilege)
--- [Keep your existing Placer code here]
 
 core.register_node("myportal:centerb", {
 	description = "center",
@@ -131,7 +132,6 @@ core.register_node("myportal:hidden", {
 	node_box = { type = "fixed", fixed = {{-0.5, -0.5, -0.5, 0.25, 0.5, 0.5}} }
 })
 
--- 4. FORMSPEC LISTENER
 core.register_on_player_receive_fields(function(player, formname, fields)
 	if formname ~= "portal_fs" then return end
 	local name = player:get_player_name()
@@ -152,12 +152,20 @@ core.register_on_player_receive_fields(function(player, formname, fields)
 
 	if fields.quit then
 		local p = core.find_nodes_in_area({x=pos.x-2, y=pos.y-2, z=pos.z-2}, {x=pos.x+2, y=pos.y+2, z=pos.z+2}, {"myportal:portal","myportal:center","myportal:centerb","myportal:hidden"})
-		for _,ps in ipairs(p) do core.remove_node(ps) end
+		if #p > 0 then
+			for _,ps in ipairs(p) do core.remove_node(ps) end
+			local inv = player:get_inventory()
+			local item = ItemStack("myportal:portal_placer")
+			if inv:room_for_item("main", item) then
+				inv:add_item("main", item)
+			else
+				core.add_item(player:get_pos(), item)
+			end
+		end
 		current_portal_pos[name] = nil
 	end
 end)
 
--- 5. THE PLACER (WITH IMPROVED AREA SPACE CHECK)
 core.register_node("myportal:portal_placer", {
 	description = "Portal Placer",
 	tiles = {"myportal_metal.png"},
@@ -173,8 +181,12 @@ core.register_node("myportal:portal_placer", {
 		local pos = pointed_thing.above
 		local dir = core.dir_to_facedir(placer:get_look_dir())
 		
-		-- AREA CHECK LOGIC
-		-- Check a 3x3x1 area based on direction
+		local nearby = core.find_nodes_in_area({x=pos.x-2, y=pos.y-2, z=pos.z-2}, {x=pos.x+2, y=pos.y+2, z=pos.z+2}, {"myportal:center"})
+		if #nearby > 0 then
+			core.chat_send_player(name, "Too close to another portal!")
+			return itemstack
+		end
+
 		local can_place = true
 		for y = 0, 2 do
 			for offset = -1, 1 do
@@ -184,7 +196,6 @@ core.register_node("myportal:portal_placer", {
 				else
 					check_pos = {x = pos.x, y = pos.y + y, z = pos.z + offset}
 				end
-				
 				if core.get_node(check_pos).name ~= "air" then
 					can_place = false
 					break
@@ -216,7 +227,6 @@ core.register_node("myportal:portal_placer", {
 	end,
 })
 
--- 6. THE ABM
 core.register_abm({
 	nodenames = {"myportal:center"},
 	interval = 1.0,
@@ -238,4 +248,13 @@ core.register_abm({
 			end
 		end
 	end
+})
+
+core.register_craft({
+	output = "myportal:portal_placer 9",
+	recipe = {
+		{"default:diamond", "default:mese","default:diamond"},
+		{"default:mese", "default:diamond_block","default:mese"},
+		{"default:diamond", "default:mese","default:diamond"},
+	}
 })
